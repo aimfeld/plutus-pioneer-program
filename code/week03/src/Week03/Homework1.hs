@@ -46,7 +46,19 @@ PlutusTx.unstableMakeIsData ''VestingDatum
 -- This should validate if either beneficiary1 has signed the transaction and the current slot is before or at the deadline
 -- or if beneficiary2 has signed the transaction and the deadline has passed.
 mkValidator :: VestingDatum -> () -> ScriptContext -> Bool
-mkValidator _ _ _ = False -- FIX ME!
+mkValidator dat () ctx = traceIfFalse "beneficiary1's signature missing" (signedByBeneficiary $ beneficiary1 dat) &&
+                         traceIfFalse "deadline expired" (not deadlineReached) ||
+                         traceIfFalse "beneficiary2's signature missing" (signedByBeneficiary $ beneficiary2 dat) &&
+                         traceIfFalse "deadline not reached" deadlineReached
+  where
+    info :: TxInfo
+    info = scriptContextTxInfo ctx
+
+    signedByBeneficiary :: PubKeyHash -> Bool
+    signedByBeneficiary beneficiary = txSignedBy info beneficiary 
+
+    deadlineReached :: Bool
+    deadlineReached = contains (from $ deadline dat) $ txInfoValidRange info
 
 data Vesting
 instance Scripts.ValidatorTypes Vesting where
@@ -100,8 +112,12 @@ grab = do
     now    <- currentTime
     pkh    <- pubKeyHash <$> ownPubKey
     utxos  <- utxoAt scrAddress
-    let utxos1 = Map.filter (isSuitable $ \dat -> beneficiary1 dat == pkh && now <= deadline dat) utxos
-        utxos2 = Map.filter (isSuitable $ \dat -> beneficiary2 dat == pkh && now >  deadline dat) utxos
+    --let utxos1 = Map.filter (isSuitable $ \dat -> beneficiary1 dat == pkh && now <= deadline dat) utxos
+    --    utxos2 = Map.filter (isSuitable $ \dat -> beneficiary2 dat == pkh && now >  deadline dat) utxos
+    -- Deadline check removed to test if validator fails
+    let utxos1 = Map.filter (isSuitable $ \dat -> beneficiary1 dat == pkh) utxos
+        utxos2 = Map.filter (isSuitable $ \dat -> beneficiary2 dat == pkh) utxos
+    
     logInfo @P.String $ printf "found %d gift(s) to grab" (Map.size utxos1 P.+ Map.size utxos2)
     unless (Map.null utxos1) $ do
         let orefs   = fst <$> Map.toList utxos1
