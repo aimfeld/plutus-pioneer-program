@@ -39,13 +39,23 @@ import           Wallet.Emulator.Wallet
 -- This policy should only allow minting (or burning) of tokens if the owner of the specified PubKeyHash
 -- has signed the transaction and if the specified deadline has not passed.
 mkPolicy :: PubKeyHash -> POSIXTime -> () -> ScriptContext -> Bool
-mkPolicy pkh deadline () ctx = True -- FIX ME!
+mkPolicy pkh deadline () ctx = 
+    traceIfFalse "Not signed by policy script owner." (txSignedBy info pkh) &&
+    traceIfFalse "Deadline passed." (to deadline `contains` txInfoValidRange info)
+    where
+        info = scriptContextTxInfo ctx
 
 policy :: PubKeyHash -> POSIXTime -> Scripts.MintingPolicy
-policy pkh deadline = undefined -- IMPLEMENT ME!
+policy pkh deadline = mkMintingPolicyScript $
+    $$(PlutusTx.compile [|| \pkh' deadline' -> Scripts.wrapMintingPolicy $ mkPolicy pkh' deadline' ||])
+    `PlutusTx.applyCode`
+    PlutusTx.liftCode pkh
+    `PlutusTx.applyCode`
+    PlutusTx.liftCode deadline
 
 curSymbol :: PubKeyHash -> POSIXTime -> CurrencySymbol
-curSymbol pkh deadline = undefined -- IMPLEMENT ME!
+curSymbol pkh deadline = scriptCurrencySymbol $ policy pkh deadline
+
 
 data MintParams = MintParams
     { mpTokenName :: !TokenName
@@ -94,5 +104,29 @@ test = runEmulatorTraceIO $ do
         { mpTokenName = tn
         , mpDeadline  = deadline
         , mpAmount    = 555
+        }
+    void $ Emulator.waitNSlots 1
+
+test2 :: IO ()
+test2 = runEmulatorTraceIO $ do
+    let deadline = slotToBeginPOSIXTime def 10
+    h1 <- activateContractWallet (Wallet 1) endpoints
+    h2 <- activateContractWallet (Wallet 2) endpoints
+    callEndpoint @"mint" h1 $ MintParams
+        { mpTokenName = "Wallet1Coin"
+        , mpDeadline  = deadline
+        , mpAmount    = 555
+        }
+    void $ Emulator.waitNSlots 1
+    callEndpoint @"mint" h2 $ MintParams
+        { mpTokenName = "Wallet2Coin"
+        , mpDeadline  = deadline
+        , mpAmount    = 111
+        }
+    void $ Emulator.waitNSlots 1
+    callEndpoint @"mint" h2 $ MintParams
+        { mpTokenName = "Wallet1Coin"
+        , mpDeadline  = deadline
+        , mpAmount    = 111
         }
     void $ Emulator.waitNSlots 1
